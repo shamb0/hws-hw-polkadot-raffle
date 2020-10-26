@@ -81,25 +81,34 @@ mod raffletkt {
 
         #[ink(message)]
         #[ink(payable)]
-        pub fn raffle_play(&mut self) {
+        pub fn raffle_play(&mut self) -> bool {
+            let mut rval = false;
+            let deposit_min = 10000000000;
+            let deposit_max = 100000000000;
             let caller = self.env().caller();
             let value = self.env().transferred_balance();
-            let player_status = self.player_status.contains_key( &caller );
 
             if cfg!(test) {
                 let dbg_msg = format!( "raffle_play value {:#?}", value );
                 ink_env::debug_println( &dbg_msg );
             }
 
-
             if cfg!(test) {
                 let dbg_msg = format!( "raffle_play bts {:#?}", self.env().block_timestamp() );
                 ink_env::debug_println( &dbg_msg );
             }
 
-            assert!( player_status == false );
-            // assert!( value > ( 1 / 100 ) && value < ( 1 / 10 ) );
-            assert!( value >= 10 && value <= 100 );
+            // Check player is new to player pool
+            let player_status = self.player_status.contains_key( &caller );
+            // assert!( player_status == false );
+            if player_status == true {
+                return rval
+            }
+
+            // Check for transfered balance range
+            if value < deposit_min || value > deposit_max {
+                return rval
+            }
 
             self.player_status.insert( caller, true );
             self.player_pool.put( caller );
@@ -122,16 +131,36 @@ mod raffletkt {
                 ink_env::debug_println( &dbg_msg );
             }
 
+            rval = true;
+            rval
+
         }
 
         #[ink(message)]
-        pub fn raffle_draw(&mut self) {
-            let caller = self.env().caller();
-            let player_status = self.player_status.contains_key( &caller );
+        pub fn raffle_draw(&mut self) -> bool {
+            let mut rval = false;
 
-            assert!( player_status == true );
-            assert!( self.winners_pool.len() < 2 );
-            assert!( self.num_players >= 5 );
+            let caller = self.env().caller();
+
+            // Check for minimum of 5 players to start the draw
+            // assert!( self.num_players >= 5 );
+            if self.num_players < 5 {
+                return rval
+            }
+
+            // Check player is in player pool
+            let player_status = self.player_status.contains_key( &caller );
+            // assert!( player_status == true );
+            if player_status == false {
+                return rval
+            }
+
+            // Check winners in the pool is less than 2 ...
+            // assert!( self.winners_pool.len() < 2 );
+            if self.winners_pool.len() >= 2 {
+                return rval
+            }
+
             // assert!( self.env().block_timestamp() > self.validity_timestamp );
 
             if cfg!(test) {
@@ -151,28 +180,31 @@ mod raffletkt {
                 // let rand_id = ( self.player_pool.get(rand_indx) ).unwrap();
 
                 // if *rand_id == caller {
-
                     let winner_id = ( self.player_pool.take( rand_indx ) ).unwrap();
 
                     self.winners_pool.put( winner_id );
-
-                    if self.winners_pool.len() == 2 {
-
-                        // if cfg!(test) {
-                        //     let dbg_msg = format!( "benefit val { }", self.env().balance() );
-                        //     ink_env::debug_println( &dbg_msg );
-                        // }
-
-                        if cfg!(test) {
-                            let dbg_msg = format!( "benefit val { }", self.total_balance );
-                            ink_env::debug_println( &dbg_msg );
-                        }
-
-                        match self.env().transfer( self.fund_beneficiary, self.total_balance ) {
-                            _ok => ()
-                        }
-                    }
                 // }
+            }
+
+            rval = true;
+            rval
+        }
+
+        #[ink(message)]
+        pub fn raffle_transfer_fund_to_beneficiary(&mut self) {
+
+            if self.winners_pool.len() == 2 && self.total_balance > 0 {
+
+                if cfg!(test) {
+                    let dbg_msg = format!( "benefit val { }", self.total_balance );
+                    ink_env::debug_println( &dbg_msg );
+                }
+
+                match self.env().transfer( self.fund_beneficiary, self.total_balance ) {
+                    _ok => ()
+                }
+
+                self.total_balance = 0;
             }
         }
 
@@ -195,6 +227,39 @@ mod raffletkt {
             winners
         }
 
+        #[ink(message)]
+        pub fn raffle_getplayersid( &mut self ) -> Vec<AccountId> {
+
+            let mut players: Vec<AccountId> = Default::default();
+
+            for player_item in self.player_pool.iter() {
+                players.push( *player_item );
+            }
+
+            players
+        }
+
+        #[ink(message)]
+        pub fn raffle_getcontract_balance( &mut self ) -> Balance {
+
+            self.env().balance()
+
+        }
+
+        #[ink(message)]
+        pub fn raffle_getdonation_balance( &mut self ) -> Balance {
+
+            self.total_balance
+
+        }
+
+        #[ink(message)]
+        pub fn raffle_fund_beneficiary( &mut self ) -> AccountId {
+
+            self.fund_beneficiary
+
+        }
+
         fn get_random(&mut self) -> u32 {
             let encodable = ( self.env().caller(), self.env().block_timestamp() , self.env().block_number() );
             let keccak256_output = self.env().hash_encoded::<Keccak256, _>( &encodable );
@@ -206,6 +271,13 @@ mod raffletkt {
             }
             rval
         }
+
+        // fn get_random(&mut self) -> u32 {
+        //     let mut rval: u32 = 0;
+        //     self.dummy_counter += 1;
+        //     rval = ( self.dummy_counter % 3 ) + 10;
+        //     rval
+        // }
 
     }
 
@@ -263,15 +335,17 @@ mod raffletkt {
             let dbg_msg = format!( "Raffle Start Donate" );
             ink_env::debug_println( &dbg_msg );
 
-            let tst_players_list = ink_prelude::vec![ ( accounts.bob, 100 ),
-                                                    ( accounts.charlie, 20 ),
-                                                    ( accounts.django, 40 ),
-                                                    ( accounts.eve, 30 ),
-                                                    ( accounts.frank, 10 ) ];
+            let tst_players_list = ink_prelude::vec![ ( accounts.bob, 15000000000 ),
+                                                    ( accounts.charlie, 15000000000 ),
+                                                    ( accounts.django, 15000000000 ),
+                                                    ( accounts.eve, 15000000000 ),
+                                                    ( accounts.frank, 15000000000 ) ];
 
             for ( tst_player_inx, tst_player_val )  in tst_players_list.iter() {
                 set_sender( *tst_player_inx , *tst_player_val );
-                raffletkt.raffle_play();
+                let play_stat = raffletkt.raffle_play();
+                let dbg_msg = format!( "Raffle Play Status {}", play_stat );
+                ink_env::debug_println( &dbg_msg );
             }
 
             let dbg_msg = format!( "Raffle Start Draw" );
@@ -282,7 +356,10 @@ mod raffletkt {
 
                 for ( tst_player_inx, tst_player_val )  in tst_players_list.iter() {
                     set_sender( *tst_player_inx , *tst_player_val );
-                    raffletkt.raffle_draw();
+
+                    let draw_stat = raffletkt.raffle_draw();
+                    let dbg_msg = format!( "Raffle Draw Status {}", draw_stat );
+                    ink_env::debug_println( &dbg_msg );
 
                     if raffletkt.raffle_isgamedone() == true {
                         let dbg_msg = format!( "Two Winners Selected Game Over !!!" );
