@@ -209,14 +209,14 @@ mod raffletkt {
         }
 
         #[ink(message)]
-        pub fn raffle_isgamedone(&mut self) -> bool {
+        pub fn raffle_isgamedone(&self) -> bool {
 
             self.winners_pool.len() == 2
 
         }
 
         #[ink(message)]
-        pub fn raffle_getwinnerid( &mut self ) -> Vec<AccountId> {
+        pub fn raffle_getwinnerid(&self) -> Vec<AccountId> {
 
             let mut winners: Vec<AccountId> = Default::default();
 
@@ -228,7 +228,7 @@ mod raffletkt {
         }
 
         #[ink(message)]
-        pub fn raffle_getplayersid( &mut self ) -> Vec<AccountId> {
+        pub fn raffle_getplayersid(&self) -> Vec<AccountId> {
 
             let mut players: Vec<AccountId> = Default::default();
 
@@ -240,30 +240,30 @@ mod raffletkt {
         }
 
         #[ink(message)]
-        pub fn raffle_getcontract_balance( &mut self ) -> Balance {
+        pub fn raffle_getcontract_balance(&self) -> Balance {
 
             self.env().balance()
 
         }
 
         #[ink(message)]
-        pub fn raffle_getdonation_balance( &mut self ) -> Balance {
+        pub fn raffle_getdonation_balance(&self) -> Balance {
 
             self.total_balance
 
         }
 
         #[ink(message)]
-        pub fn raffle_fund_beneficiary( &mut self ) -> AccountId {
+        pub fn raffle_fund_beneficiary(&self) -> AccountId {
 
             self.fund_beneficiary
 
         }
 
-        fn get_random(&mut self) -> u32 {
-            let encodable = ( self.env().caller(), self.env().block_timestamp() , self.env().block_number() );
-            let keccak256_output = self.env().hash_encoded::<Keccak256, _>( &encodable );
-            let mut rand_hash = self.env().random(&keccak256_output);
+        fn get_random() -> u32 {
+            let encodable = ( Self::env().caller(), Self::env().block_timestamp() , Self::env().block_number() );
+            let keccak256_output = Self::env().hash_encoded::<Keccak256, _>( &encodable );
+            let mut rand_hash = Self::env().random(&keccak256_output);
             let rand_num = rand_hash.as_mut();
             let mut rval: u32 = 0;
             for val in rand_num.iter() {
@@ -271,13 +271,6 @@ mod raffletkt {
             }
             rval
         }
-
-        // fn get_random(&mut self) -> u32 {
-        //     let mut rval: u32 = 0;
-        //     self.dummy_counter += 1;
-        //     rval = ( self.dummy_counter % 3 ) + 10;
-        //     rval
-        // }
 
     }
 
