@@ -1,4 +1,6 @@
-# hws-hw-polkadot-raffle
+# [ADVANCED CHALLENGE] Smart contracts - Build a charity raffle | Polkadot-Network Funded Issue Detail | Gitcoin | Gitcoin
+
+* [[ADVANCED CHALLENGE] Smart contracts - Build a charity raffle | Polkadot-Network Funded Issue Detail | Gitcoin | Gitcoin](https://gitcoin.co/issue/Polkadot-Network/hello-world-by-polkadot/3/100023929)
 
 ---
 
