@@ -5,7 +5,7 @@
 ## Howto run test
 
 ```shell
-argo +nightly test -- --nocapture
+cargo +nightly test -- --nocapture
 ```
 
 ---
@@ -16,34 +16,24 @@ argo +nightly test -- --nocapture
 RUST_BACKTRACE=1 ./target/release/canvas -lruntime=debug --dev --tmp
 ```
 
-## Contract Deployment
+**Draw Snapshot**
 
-![](https://i.imgur.com/Oqf7lM9.png)
+![](https://i.imgur.com/krLEMld.png)
 
-## update_raffle_beneficiary()
+![](https://i.imgur.com/3DoDjRt.png)
 
-![](https://i.imgur.com/12fvGw5.png)
+**Events Snapshot**
 
-![](https://i.imgur.com/CcbETLQ.png)
+![](https://i.imgur.com/xdVqNBF.png)
 
-## raffle_getcontract_balance()
+![](https://i.imgur.com/9pSgmmU.png)
 
-![](https://i.imgur.com/feRDSX2.png)
+**contract termination**
 
-## raffle_getdonation_balance()
+![](https://i.imgur.com/vkPhXp5.png)
 
-![](https://i.imgur.com/kh94Nda.png)
+**canvas-ui**
 
-![](https://i.imgur.com/YoC4NRx.png)
+![](https://i.imgur.com/gmARsgs.png)
 
-
-## raffle_play()
-
-![](https://i.imgur.com/p61WEgC.png)
-
-
-## raffle_getplayersid()
-
-![](https://i.imgur.com/CFeW6vP.png)
-
-![](https://i.imgur.com/pddxapM.png)
+![](https://i.imgur.com/gI3HDju.png)

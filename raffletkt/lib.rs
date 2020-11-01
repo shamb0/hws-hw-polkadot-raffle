@@ -6,31 +6,28 @@ use ink_lang as ink;
 mod raffletkt {
     #[cfg(not(feature = "ink-as-dependency"))]
     use ink_prelude::format;
-    use ink_prelude::vec::Vec;
+    use ink_prelude::vec::Vec as PreludeVec;
+
     use ink_storage::{
         collections::{
             HashMap as StorageHashMap,
-            Stash as StorageStash,
+            Vec as StorageVec,
         }
     };
 
-    use ink_env::{
-        hash::{
-            Keccak256,
-        }
-    };
+    /// Minimum player bet is 0.01 unit
+    const BET_VALUE_MIN: u128 = 10_000_000_000_000;
+    /// Maximum player bet is 0.1 unit
+    const BET_VALUE_MAX: u128 = 100_000_000_000_000;
 
-    /// Defines the storage of your contract.
-    /// Add new fields to the below struct in order
-    /// to add new static storage fields to your contract.
     #[ink(storage)]
     pub struct RaffleTkt {
 
         /// Player Pool :: list of players purchaed the raffle ticket
-        player_pool: StorageStash<AccountId>,
+        player_pool: StorageVec<AccountId>,
 
         /// Player Pool :: list of players purchaed the raffle ticket
-        winners_pool: StorageStash<AccountId>,
+        winners_pool: StorageVec<AccountId>,
 
         /// Player Status in the pool :: active or not
         player_status: StorageHashMap<AccountId, bool>,
@@ -38,53 +35,112 @@ mod raffletkt {
         /// beneficiary
         fund_beneficiary: AccountId,
 
-        /// Validity time-stamp
-        validity_timestamp: u64,
+        /// minimum raffle duration
+        minimum_raffle_lock_duration: u64,
+
+        /// time stamp at which to start the draw
+        raffle_draw_time_stamp: u64,
 
         /// Number of registered players
         num_players: u32,
 
-        /// Number of registered players
-        total_balance: Balance
+        /// Minimum Number of players needed to start the draw
+        min_num_players: u32,
 
+        /// Number of registered players
+        total_balance: Balance,
+
+        /// raffle contract owner
+        raffle_owner: AccountId,
+
+    }
+
+    /// Errors that can occur upon calling this contract.
+    #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
+    #[cfg_attr(feature = "std", derive(::scale_info::TypeInfo))]
+    pub enum Error {
+        /// The user has already played for this raffle
+        UserHasAlreadyPlayed,
+        /// Bet should be between 0.1 and 0.01 Unit
+        IncorrectBet,
+        /// Raffle cannot be drawn yet
+        RaffleNotDrawable,
+        /// Raffle is closed
+        RaffleClosed,
+        /// Caller not in player list
+        InvalidPlayer,
+        /// The transfer has failed
+        TransferFailed,
+        /// Invalid Contract Owner
+        InvalidOwner
+    }
+    pub type Result<T> = core::result::Result<T, Error>;
+
+
+    #[ink(event)]
+    /// New player enters the raffle
+    pub struct NewPlayer {
+        #[ink(topic)]
+        /// The player account
+        player: AccountId,
+    }
+
+    #[ink(event)]
+    /// The raffle is started, meaning enough players are playing
+    pub struct RaffleStarted {
+        #[ink(topic)]
+        /// The start date
+        start_date: Timestamp,
+    }
+
+    #[ink(event)]
+    /// A winner has been picked
+    pub struct WinnerPicked {
+        #[ink(topic)]
+        /// The winner account
+        winner: AccountId,
+    }
+
+    #[ink(event)]
+    /// A invalid player index
+    pub struct PlayerInvalidIndex {
+        #[ink(topic)]
+        /// invalid index
+        index: u32,
+    }
+
+    #[ink(event)]
+    pub struct TransferFailed {
     }
 
     impl RaffleTkt {
 
-        /// Constructor that initializes the `bool` value to `false`.
-        ///
-        /// Constructors can delegate to other constructors.
         #[ink(constructor)]
-        pub fn default() -> Self {
-            Self {
-                player_pool: StorageStash::default(),
-                winners_pool: StorageStash::default(),
+        pub fn default( raffle_beneficiary: AccountId, minimum_players: u32, minimum_raffle_duration: u64) -> Self {
+
+            let caller = Self::env().caller();
+
+            let raffle_obj = Self {
+                player_pool: StorageVec::new(),
+                winners_pool: StorageVec::new(),
                 player_status: StorageHashMap::default(),
-                fund_beneficiary: Default::default(),
-                validity_timestamp: Default::default(),
+                fund_beneficiary: raffle_beneficiary,
+                minimum_raffle_lock_duration: minimum_raffle_duration,
+                raffle_draw_time_stamp: 0,
+                min_num_players: minimum_players,
                 num_players: 0,
                 total_balance: 0,
-            }
+                raffle_owner: caller,
+            };
+
+            raffle_obj
         }
 
-        #[ink(message)]
-        pub fn update_raffle_beneficiary(&mut self, raffle_beneficiary: AccountId ) {
-            self.fund_beneficiary = raffle_beneficiary;
-            self.validity_timestamp = self.env().block_timestamp() + ( 5 * 60 * 1000 );
+        #[ink(message, payable)]
+        pub fn raffle_play(&mut self) -> Result<()> {
 
-            if cfg!(test) {
-                let dbg_msg = format!( "validity_timestamp {:#?}", self.validity_timestamp );
-                ink_env::debug_println( &dbg_msg );
-            }
-
-        }
-
-        #[ink(message)]
-        #[ink(payable)]
-        pub fn raffle_play(&mut self) -> bool {
-            let mut rval = false;
-            let deposit_min = 10000000000;
-            let deposit_max = 100000000000;
+            let deposit_min = BET_VALUE_MIN;
+            let deposit_max = BET_VALUE_MAX;
             let caller = self.env().caller();
             let value = self.env().transferred_balance();
 
@@ -102,24 +158,33 @@ mod raffletkt {
             let player_status = self.player_status.contains_key( &caller );
             // assert!( player_status == false );
             if player_status == true {
-                return rval
+                return Err(Error::UserHasAlreadyPlayed)
             }
 
             // Check for transfered balance range
             if value < deposit_min || value > deposit_max {
-                return rval
+                return Err(Error::IncorrectBet)
             }
 
             self.player_status.insert( caller, true );
-            self.player_pool.put( caller );
+            self.player_pool.push( caller );
 
             self.num_players = self.player_pool.len();
 
-            // match self.env().transfer( self.env().account_id(), value ) {
-            //     _ok => ()
-            // }
-
             self.total_balance += value;
+
+            Self::env().emit_event( NewPlayer {
+                player: caller,
+            });
+
+            if self.num_players >= self.min_num_players {
+
+                self.raffle_draw_time_stamp = Self::env().block_timestamp() + self.minimum_raffle_lock_duration;
+
+                Self::env().emit_event( RaffleStarted {
+                    start_date: self.raffle_draw_time_stamp,
+                });
+            }
 
             if cfg!(test) {
                 let dbg_msg = format!( "Cont Curr Balance { }", self.env().balance() );
@@ -131,44 +196,37 @@ mod raffletkt {
                 ink_env::debug_println( &dbg_msg );
             }
 
-            rval = true;
-            rval
-
+            return Ok(())
         }
 
         #[ink(message)]
-        pub fn raffle_draw(&mut self) -> bool {
-            let mut rval = false;
+        pub fn raffle_draw(&mut self) -> Result<()> {
 
             let caller = self.env().caller();
 
-            // Check for minimum of 5 players to start the draw
-            // assert!( self.num_players >= 5 );
-            if self.num_players < 5 {
-                return rval
+            // Check if max winner is selecetd ...
+            if self.raffle_is_game_closed() == true {
+                return Err(Error::RaffleClosed)
+            }
+
+            if self.raffle_is_draw_open() == false {
+                return Err(Error::RaffleNotDrawable)
             }
 
             // Check player is in player pool
             let player_status = self.player_status.contains_key( &caller );
             // assert!( player_status == true );
             if player_status == false {
-                return rval
+                return Err(Error::InvalidPlayer)
             }
 
-            // Check winners in the pool is less than 2 ...
-            // assert!( self.winners_pool.len() < 2 );
-            if self.winners_pool.len() >= 2 {
-                return rval
-            }
-
-            // assert!( self.env().block_timestamp() > self.validity_timestamp );
 
             if cfg!(test) {
                 let dbg_msg = format!( "player_pool len {:#?}", self.player_pool.len() );
                 ink_env::debug_println( &dbg_msg );
             }
 
-            let rand_indx = self.get_random() % self.player_pool.len( );
+            let rand_indx = Self::get_random() % self.player_pool.len( );
 
             if cfg!(test) {
                 let dbg_msg = format!( "random indx { }", rand_indx );
@@ -177,48 +235,36 @@ mod raffletkt {
 
             if self.player_pool.get(rand_indx).is_some() {
 
-                // let rand_id = ( self.player_pool.get(rand_indx) ).unwrap();
+                let winner = ( self.player_pool.swap_remove( rand_indx ) ).unwrap();
 
-                // if *rand_id == caller {
-                    let winner_id = ( self.player_pool.take( rand_indx ) ).unwrap();
+                self.winners_pool.push( winner );
 
-                    self.winners_pool.put( winner_id );
-                // }
+                Self::env().emit_event(WinnerPicked {
+                    winner
+                });
+
+            } else {
+
+                Self::env().emit_event(PlayerInvalidIndex {
+                    index: rand_indx
+                });
+
             }
 
-            rval = true;
-            rval
-        }
+            // Check if max winner is selecetd ...
+            if self.raffle_is_game_closed() == true {
 
-        #[ink(message)]
-        pub fn raffle_transfer_fund_to_beneficiary(&mut self) {
+                return self.raffle_transfer_fund_to_beneficiary()
 
-            if self.winners_pool.len() == 2 && self.total_balance > 0 {
-
-                if cfg!(test) {
-                    let dbg_msg = format!( "benefit val { }", self.total_balance );
-                    ink_env::debug_println( &dbg_msg );
-                }
-
-                match self.env().transfer( self.fund_beneficiary, self.total_balance ) {
-                    _ok => ()
-                }
-
-                self.total_balance = 0;
             }
+
+            return Ok(())
         }
 
         #[ink(message)]
-        pub fn raffle_isgamedone(&self) -> bool {
+        pub fn raffle_getwinnerid(&self) -> PreludeVec<AccountId> {
 
-            self.winners_pool.len() == 2
-
-        }
-
-        #[ink(message)]
-        pub fn raffle_getwinnerid(&self) -> Vec<AccountId> {
-
-            let mut winners: Vec<AccountId> = Default::default();
+            let mut winners: PreludeVec<AccountId> = PreludeVec::default();
 
             for win_item in self.winners_pool.iter() {
                 winners.push( *win_item );
@@ -228,9 +274,9 @@ mod raffletkt {
         }
 
         #[ink(message)]
-        pub fn raffle_getplayersid(&self) -> Vec<AccountId> {
+        pub fn raffle_getplayersid(&self) -> PreludeVec<AccountId> {
 
-            let mut players: Vec<AccountId> = Default::default();
+            let mut players: PreludeVec<AccountId> = PreludeVec::new();
 
             for player_item in self.player_pool.iter() {
                 players.push( *player_item );
@@ -239,10 +285,25 @@ mod raffletkt {
             players
         }
 
-        #[ink(message)]
-        pub fn raffle_getcontract_balance(&self) -> Balance {
 
-            self.env().balance()
+        #[ink(message)]
+        pub fn raffle_is_draw_open(&self) -> bool {
+
+            Self::env().block_timestamp() >= self.raffle_draw_time_stamp
+
+        }
+
+        #[ink(message)]
+        pub fn raffle_is_game_closed(&self) -> bool {
+
+            self.winners_pool.len() == 2
+        }
+
+
+        #[ink(message)]
+        pub fn raffle_get_fund_beneficiary_id(&self) -> AccountId {
+
+            self.fund_beneficiary
 
         }
 
@@ -254,22 +315,59 @@ mod raffletkt {
         }
 
         #[ink(message)]
-        pub fn raffle_fund_beneficiary(&self) -> AccountId {
+        /// Terminate the raffle contract
+        pub fn raffle_terminate(&mut self) -> Result<()> {
 
-            self.fund_beneficiary
+            let caller = self.env().caller();
 
+            if caller == self.raffle_owner {
+
+                if self.raffle_is_game_closed() == true {
+
+                    self.env().terminate_contract(self.raffle_owner);
+                }
+
+            }
+            else {
+                return Err(Error::InvalidOwner)
+            }
+
+            return Ok(())
+        }
+
+        fn raffle_transfer_fund_to_beneficiary(&mut self) -> Result<()> {
+
+            if self.winners_pool.len() == 2 && self.total_balance > 0 {
+
+                if cfg!(test) {
+                    let dbg_msg = format!( "benefit val { }", self.total_balance );
+                    ink_env::debug_println( &dbg_msg );
+                }
+
+                let transfer_result = self.env().transfer( self.fund_beneficiary, self.total_balance );
+
+                if transfer_result.is_err() {
+                    Self::env().emit_event(TransferFailed {});
+                    return Err(Error::TransferFailed)
+                }
+
+                self.total_balance = 0;
+            }
+
+            return Ok(())
         }
 
         fn get_random() -> u32 {
-            let encodable = ( Self::env().caller(), Self::env().block_timestamp() , Self::env().block_number() );
-            let keccak256_output = Self::env().hash_encoded::<Keccak256, _>( &encodable );
-            let mut rand_hash = Self::env().random(&keccak256_output);
-            let rand_num = rand_hash.as_mut();
-            let mut rval: u32 = 0;
-            for val in rand_num.iter() {
-                rval += *val as u32;
-            }
-            rval
+            let seed: [u8; 8] = [70, 93, 3, 03, 15, 124, 148, 18];
+            let random_hash = Self::env().random(&seed);
+            Self::as_u32_be(&random_hash.as_ref())
+        }
+
+        fn as_u32_be(array: &[u8]) -> u32 {
+            ((array[0] as u32) << 24) +
+                ((array[1] as u32) << 16) +
+                ((array[2] as u32) << 8) +
+                ((array[3] as u32) << 0)
         }
 
     }
@@ -308,37 +406,34 @@ mod raffletkt {
         /// We test if the default constructor does its job.
         #[ink::test]
         fn default_works() {
-            let mut raffletkt = RaffleTkt::default();
+
             let accounts = default_accounts();
 
-            let dbg_msg = format!( "Raffle Add Beneficiary" );
-            ink_env::debug_println( &dbg_msg );
-
-            // let ben_bal: Result<T::Balance, E::Err> = ink_env::test::get_account_balance( accounts.alice );
-            // match ben_bal {
-            //     Err(why) => panic!("{:?}", why),
-            //     Ok(ben_bal) => {
-            //         let dbg_msg = format!( "Beneficiery balance ... {}", ben_bal );
-            //         ink_env::debug_println( &dbg_msg );
-            //     },
-            // }
-
-            raffletkt.update_raffle_beneficiary( accounts.alice );
+            let mut raffletkt = RaffleTkt::default( accounts.alice, 4, 4 * 1000);
 
             let dbg_msg = format!( "Raffle Start Donate" );
             ink_env::debug_println( &dbg_msg );
 
-            let tst_players_list = ink_prelude::vec![ ( accounts.bob, 15000000000 ),
-                                                    ( accounts.charlie, 15000000000 ),
-                                                    ( accounts.django, 15000000000 ),
-                                                    ( accounts.eve, 15000000000 ),
-                                                    ( accounts.frank, 15000000000 ) ];
+            let tst_players_list = ink_prelude::vec![ ( accounts.bob, 15_000_000_000_000 ),
+                                                    ( accounts.charlie, 15_000_000_000_000 ),
+                                                    ( accounts.django, 15_000_000_000_000 ),
+                                                    ( accounts.eve, 15_000_000_000_000 ),
+                                                    ( accounts.frank, 15_000_000_000_000 ) ];
 
             for ( tst_player_inx, tst_player_val )  in tst_players_list.iter() {
                 set_sender( *tst_player_inx , *tst_player_val );
                 let play_stat = raffletkt.raffle_play();
-                let dbg_msg = format!( "Raffle Play Status {}", play_stat );
-                ink_env::debug_println( &dbg_msg );
+
+                match play_stat {
+                    Ok(_) => {
+                        let dbg_msg = format!( "Raffle Play Status Ok");
+                        ink_env::debug_println( &dbg_msg );
+                    }
+                    Err(msg) => {
+                        let dbg_msg = format!( "Raffle Play Status Err{:?}", msg );
+                        ink_env::debug_println( &dbg_msg );
+                    }
+                }
             }
 
             let dbg_msg = format!( "Raffle Start Draw" );
@@ -351,13 +446,38 @@ mod raffletkt {
                     set_sender( *tst_player_inx , *tst_player_val );
 
                     let draw_stat = raffletkt.raffle_draw();
-                    let dbg_msg = format!( "Raffle Draw Status {}", draw_stat );
-                    ink_env::debug_println( &dbg_msg );
 
-                    if raffletkt.raffle_isgamedone() == true {
+                    match draw_stat {
+                        Ok(_) => {
+                            let dbg_msg = format!( "Raffle Draw Status Ok");
+                            ink_env::debug_println( &dbg_msg );
+                        }
+                        Err(msg) => {
+                            let dbg_msg = format!( "Raffle Draw Status Err{:?}", msg );
+                            ink_env::debug_println( &dbg_msg );
+                        }
+                    }
+
+                    if raffletkt.raffle_is_game_closed() == true {
                         let dbg_msg = format!( "Two Winners Selected Game Over !!!" );
                         ink_env::debug_println( &dbg_msg );
                         tst_break_loop = true;
+
+                        raffletkt.raffle_transfer_fund_to_beneficiary();
+
+                        let trans_balan_stat = raffletkt.raffle_draw();
+
+                        match trans_balan_stat {
+                            Ok(_) => {
+                                let dbg_msg = format!( "Raffle Draw Status Ok");
+                                ink_env::debug_println( &dbg_msg );
+                            }
+                            Err(msg) => {
+                                let dbg_msg = format!( "Raffle Draw Status Err{:?}", msg );
+                                ink_env::debug_println( &dbg_msg );
+                            }
+                        }
+
                         break;
                     }
                 }
